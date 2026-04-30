@@ -2,7 +2,7 @@
 # update_currency_rates.py — Скрипт для оновлення курсів валют NBP
 # ====================================================================================
 # Цей скрипт запускається GitHub Action щодня.
-# Він завантажує курси валют з API NBP та зберігає їх у файл data/currency_rates.csv
+# Він завантажує курси валют з API NBP та зберігає їх у файл currency_rates.csv
 # ====================================================================================
 
 import pandas as pd
@@ -72,8 +72,8 @@ def update_currency_rates():
     - Jeśli plik istnieje → dodaje tylko brakujące dni (od ostatniej daty do dzisiaj)
     """
     
-    # Ścieżka do pliku
-    file_path = "data/currency_rates.csv"
+    # Ścieżka do pliku (w korzeniu repozytorium)
+    file_path = "currency_rates.csv"
     
     # Dzisiejsza data
     today = datetime.now().date()
@@ -155,10 +155,7 @@ def update_currency_rates():
             continue
         result_df[currency] = result_df[currency].round(4)
     
-    # Upewnij się, że katalog data istnieje
-    os.makedirs("data", exist_ok=True)
-    
-    # Zapisz do pliku CSV
+    # Zapisz do pliku CSV (w korzeniu repozytorium)
     result_df.to_csv(file_path, index=False)
     print(f"Plik zapisany: {file_path}")
     print(f"Zakres dat: od {result_df['Date'].min()} do {result_df['Date'].max()}")
