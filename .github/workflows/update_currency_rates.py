@@ -99,6 +99,8 @@ def update_currency_rates():
         # Przygotuj DataFrame dla nowych danych
         date_range = pd.date_range(start=start_date, end=today)
         new_df = pd.DataFrame({'Date': date_range.strftime('%Y-%m-%d')})
+        # Конвертуємо Date в той самий тип, що й existing_df
+        new_df['Date'] = pd.to_datetime(new_df['Date']).dt.date
         
         # Dla każdej waluty pobierz brakujące kursy
         for currency in CURRENCIES:
@@ -110,7 +112,7 @@ def update_currency_rates():
             rates = fetch_currency_rates(currency, start_date.strftime('%Y-%m-%d'), today.strftime('%Y-%m-%d'))
             
             # Wypełnij kolumnę
-            new_df[currency] = new_df['Date'].map(rates)
+            new_df[currency] = new_df['Date'].astype(str).map(rates)
         
         # Połącz istniejący DataFrame z nowym
         result_df = pd.concat([existing_df, new_df], ignore_index=True)
@@ -122,6 +124,7 @@ def update_currency_rates():
         start = datetime.strptime(START_DATE, "%Y-%m-%d").date()
         date_range = pd.date_range(start=start, end=today)
         result_df = pd.DataFrame({'Date': date_range.strftime('%Y-%m-%d')})
+        result_df['Date'] = pd.to_datetime(result_df['Date']).dt.date
         
         # Dla każdej waluty pobierz kursy w rocznych porcjach
         for currency in CURRENCIES:
@@ -141,7 +144,7 @@ def update_currency_rates():
                 current_start = current_end + timedelta(days=1)
                 print(f"  Pobrano do {current_end}")
             
-            result_df[currency] = result_df['Date'].map(all_rates)
+            result_df[currency] = result_df['Date'].astype(str).map(all_rates)
     
     # Wypełnij brakujące wartości (weekendy, święta) poprzednim kursem
     for currency in CURRENCIES:
