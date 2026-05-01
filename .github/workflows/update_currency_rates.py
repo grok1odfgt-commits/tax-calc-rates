@@ -1,8 +1,28 @@
 # ====================================================================================
-# update_currency_rates.py — Скрипт для оновлення курсів валют NBP
+# update_currency_rates.py — Скрипт для оновлення курсів валют НБП (Narodowy Bank Polski)
 # ====================================================================================
 # Цей скрипт запускається GitHub Action щодня.
-# Він завантажує курси валют з API NBP та зберігає їх у файл currency_rates.csv
+# Він завантажує курси валют з офіційного API Національного банку Польщі (NBP)
+# та зберігає їх у файл currency_rates.csv в корені репозиторію.
+# ====================================================================================
+#
+# ЯК ЦЕ ПРАЦЮЄ:
+# -------------
+# 1. Якщо файл currency_rates.csv ще не існує (або порожній):
+#    - Скрипт завантажує ПОВНУ історію курсів з 2 січня 2002 року до сьогодні
+#    - Це відбувається один раз, при першому запуску
+#    - Завантаження займає 5-15 хвилин, тому що потрібно обробити 40+ валют
+#
+# 2. Якщо файл вже існує:
+#    - Скрипт знаходить останню дату в наявному файлі
+#    - Завантажує ТІЛЬКИ нові дні (від останньої дати до сьогодні)
+#    - Це відбувається швидко, десь за 1-2 хвилини
+#
+# 3. Після завантаження:
+#    - Всі прогалини (вихідні, свята) заповнюються останнім відомим курсом (ffill)
+#    - Курси округлюються до 4 знаків після коми
+#    - Файл зберігається в корені репозиторію з назвою "currency_rates.csv"
+#
 # ====================================================================================
 
 import pandas as pd
@@ -13,7 +33,9 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ========================== СПИСОК ВАЛЮТ ==========================
-# Всі валюти, які публікує NBP (станом на 2025 рік)
+# Це перелік всіх валют, які публікує Національний банк Польщі (станом на 2025 рік)
+# Валют всього 46, включаючи злотий (PLN), який додається автоматично
+# Якщо валюти немає в цьому списку, її курс не буде завантажено
 CURRENCIES = [
     "USD", "EUR", "JPY", "GBP", "CHF", "CAD", "AUD", "NZD", "NOK", "SEK",
     "HKD", "SGD", "CNY", "KRW", "MXN", "BRL", "INR", "ZAR", "TRY", "PLN",
@@ -23,11 +45,23 @@ CURRENCIES = [
 ]
 
 # Дата початку: 2 січня 2002 року (перша доступна дата в API NBP)
+# Раніше цієї дати архівних курсів не існує в електронному вигляді
 START_DATE = "2002-01-02"
 
 # ========================== ФУНКЦІЯ ЗАПИТУ З ПОВТОРАМИ ==========================
 def get_with_retry(url, retries=3, backoff_factor=1, timeout=30):
-    """Wykonuje żądanie GET z automatycznymi ponownymi próbami."""
+    """
+    Виконує HTTP-запит з автоматичними повторними спробами у разі помилки.
+    Це потрібно, тому що API НБП іноді може тимчасово не відповідати.
+    
+    Параметри:
+    - url: адреса для запиту
+    - retries: кількість повторних спроб (за замовчуванням 3)
+    - backoff_factor: затримка між спробами (що більше, то довше чекаємо)
+    - timeout: максимальний час очікування відповіді в секундах
+    
+    Повертає об'єкт відповіді або None у разі помилки.
+    """
     session = requests.Session()
     retry = Retry(total=retries,
                   read=retries,
@@ -47,8 +81,17 @@ def get_with_retry(url, retries=3, backoff_factor=1, timeout=30):
 # ========================== ЗАВАНТАЖЕННЯ КУРСІВ ДЛЯ ОДНІЄЇ ВАЛЮТИ ==========================
 def fetch_currency_rates(currency, start_date, end_date):
     """
-    Pobiera kursy dla jednej waluty z API NBP w podanym zakresie dat.
-    Zwraca słownik {data: kurs} lub pusty słownik w przypadku błędu.
+    Завантажує курси для однієї конкретної валюти за вказаний проміжок часу.
+    
+    Параметри:
+    - currency: код валюти, наприклад "USD" або "EUR"
+    - start_date: дата початку у форматі "РРРР-ММ-ДД"
+    - end_date: дата кінця у форматі "РРРР-ММ-ДД"
+    
+    Повертає словник, де ключ - дата, значення - курс.
+    Наприклад: {"2024-01-01": 4.0, "2024-01-02": 4.01, ...}
+    
+    Якщо запит не вдався, повертає порожній словник.
     """
     url = f"https://api.nbp.pl/api/exchangerates/rates/a/{currency}/{start_date}/{end_date}/?format=json"
     response = get_with_retry(url)
@@ -64,106 +107,127 @@ def fetch_currency_rates(currency, start_date, end_date):
             return {}
     return {}
 
-# ========================== GŁÓWNA FUNKCJA ==========================
+# ========================== ГОЛОВНА ФУНКЦІЯ ==========================
 def update_currency_rates():
     """
-    Główna funkcja aktualizująca plik currency_rates.csv.
-    - Jeśli plik nie istnieje → tworzy go z pełną historią od 2002 roku
-    - Jeśli plik istnieje → dodaje tylko brakujące dni (od ostatniej daty do dzisiaj)
+    Головна функція, яка оновлює файл currency_rates.csv.
+    
+    ЩО ВОНА РОБИТЬ:
+    --------------
+    1. Перевіряє, чи існує вже файл з курсами
+    2. Якщо файлу НЕМАЄ: завантажує повну історію з 2002 року до сьогодні
+    3. Якщо файл ІСНУЄ: додає тільки нові дні, яких ще немає
+    4. Заповнює прогалини (вихідні, свята) попередніми курсами
+    5. Заокруглює всі курси до 4 знаків після коми
+    6. Зберігає оновлений файл у корені репозиторію
+    
+    ДЛЯ ЧОГО ЦЕ ПОТРІБНО:
+    ---------------------
+    Головний додаток (калькулятор FIFO) читає курси з цього файлу,
+    замість того щоб кожен раз ходити до API НБП. Це набагато швидше.
     """
     
-    # Ścieżka do pliku (w korzeniu repozytorium)
+    # Шлях до файлу (зберігається в корені репозиторію, не в папці data)
     file_path = "currency_rates.csv"
     
-    # Dzisiejsza data
+    # Сьогоднішня дата (потрібна, щоб знати, докуди завантажувати)
     today = datetime.now().date()
     
-    # Sprawdzenie czy plik istnieje
+    # Перевіряємо, чи вже існує файл і чи він не порожній
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-        # Wczytaj istniejący plik
+        # ========== ВИПАДОК 1: ФАЙЛ ІСНУЄ ==========
+        # Читаємо існуючий файл
         existing_df = pd.read_csv(file_path)
         existing_df['Date'] = pd.to_datetime(existing_df['Date']).dt.date
         
-        # Znajdź ostatnią datę w pliku
+        # Знаходимо останню дату, яка вже є у файлі
         last_date = existing_df['Date'].max()
         start_date = last_date + timedelta(days=1)
         
-        print(f"Plik istnieje. Ostatnia data: {last_date}")
-        print(f"Pobieranie brakujących danych od {start_date} do {today}")
+        print(f"Файл існує. Остання дата: {last_date}")
+        print(f"Завантаження нових даних з {start_date} до {today}")
         
-        # Jeśli nie ma brakujących dni → zakończ
+        # Якщо нових дат немає (сьогоднішня дата вже є у файлі) — завершуємо роботу
         if start_date > today:
-            print("Brak nowych danych do pobrania.")
+            print("Нових даних для завантаження немає.")
             return
         
-        # Przygotuj DataFrame dla nowych danych
+        # Створюємо порожню таблицю для нових дат
         date_range = pd.date_range(start=start_date, end=today)
         new_df = pd.DataFrame({'Date': date_range.strftime('%Y-%m-%d')})
-        # Конвертуємо Date в той самий тип, що й existing_df
+        # Конвертуємо дати в правильний формат (щоб потім можна було порівнювати)
         new_df['Date'] = pd.to_datetime(new_df['Date']).dt.date
         
-        # Dla każdej waluty pobierz brakujące kursy
+        # Для кожної валюти завантажуємо курси за нові дні
         for currency in CURRENCIES:
             if currency == "PLN":
+                # Для злотого курс завжди 1.0
                 new_df[currency] = 1.0
                 continue
             
-            print(f"Pobieranie kursów dla {currency} od {start_date} do {today}...")
+            print(f"Завантаження курсів для {currency} з {start_date} до {today}...")
             rates = fetch_currency_rates(currency, start_date.strftime('%Y-%m-%d'), today.strftime('%Y-%m-%d'))
             
-            # Wypełnij kolumnę
+            # Додаємо курси до таблиці
             new_df[currency] = new_df['Date'].astype(str).map(rates)
         
-        # Połącz istniejący DataFrame z nowym
+        # Об'єднуємо стару таблицю з новою
         result_df = pd.concat([existing_df, new_df], ignore_index=True)
         
     else:
-        # Plik nie istnieje - utwórz od nowa z pełną historią
-        print(f"Plik nie istnieje. Tworzenie nowego pliku z historią od {START_DATE} do {today}")
+        # ========== ВИПАДОК 2: ФАЙЛ НЕ ІСНУЄ (або порожній) ==========
+        # Створюємо новий файл з ПОВНОЮ історією з 2002 року
+        print(f"Файл не існує. Створення нового файлу з історією з {START_DATE} до {today}")
         
         start = datetime.strptime(START_DATE, "%Y-%m-%d").date()
         date_range = pd.date_range(start=start, end=today)
         result_df = pd.DataFrame({'Date': date_range.strftime('%Y-%m-%d')})
         result_df['Date'] = pd.to_datetime(result_df['Date']).dt.date
         
-        # Dla każdej waluty pobierz kursy w rocznych porcjach
+        # Для кожної валюти завантажуємо курси річними порціями
+        # (це повільніше, але потрібно тільки один раз)
         for currency in CURRENCIES:
             if currency == "PLN":
                 result_df[currency] = 1.0
                 continue
             
-            print(f"Pobieranie kursów dla {currency}...")
+            print(f"Завантаження курсів для {currency}...")
             all_rates = {}
             
-            # Pobieranie w rocznych porcjach (od 2002 do dzisiaj)
+            # Розбиваємо на річні інтервали, щоб не перевантажувати API
             current_start = start
             while current_start <= today:
                 current_end = min(current_start + timedelta(days=365), today)
                 rates = fetch_currency_rates(currency, current_start.strftime('%Y-%m-%d'), current_end.strftime('%Y-%m-%d'))
                 all_rates.update(rates)
                 current_start = current_end + timedelta(days=1)
-                print(f"  Pobrano do {current_end}")
+                print(f"  Завантажено до {current_end}")
             
             result_df[currency] = result_df['Date'].astype(str).map(all_rates)
     
-    # Wypełnij brakujące wartości (weekendy, święta) poprzednim kursem
+    # ========== POST-OBRA ROBKA: ОЧИЩЕННЯ ДАНИХ ==========
+    
+    # Заповнюємо прогалини (вихідні, свята) останнім відомим курсом
+    # Наприклад: якщо курс USD на суботу не опубліковано, беремо курс з п'ятниці
     for currency in CURRENCIES:
         if currency == "PLN":
             continue
         result_df[currency] = result_df[currency].ffill()
     
-    # Zaokrąglij kursy do 4 miejsc po przecinku
+    # Заокруглюємо всі курси до 4 знаків після коми
+    # Це потрібно, щоб уникнути дуже довгих дробових чисел
     for currency in CURRENCIES:
         if currency == "PLN":
             continue
         result_df[currency] = result_df[currency].round(4)
     
-    # Zapisz do pliku CSV (w korzeniu repozytorium)
+    # Зберігаємо готовий файл у корені репозиторію
     result_df.to_csv(file_path, index=False)
-    print(f"Plik zapisany: {file_path}")
-    print(f"Zakres dat: od {result_df['Date'].min()} do {result_df['Date'].max()}")
-    print(f"Liczba wierszy: {len(result_df)}")
+    print(f"Файл збережено: {file_path}")
+    print(f"Діапазон дат: з {result_df['Date'].min()} по {result_df['Date'].max()}")
+    print(f"Кількість рядків: {len(result_df)}")
 
-# ========================== URUCHOMIENIE ==========================
+# ========================== ЗАПУСК СКРИПТА ==========================
+# Цей код виконується тільки якщо файл запущено безпосередньо, а не імпортовано
 if __name__ == "__main__":
     update_currency_rates()
