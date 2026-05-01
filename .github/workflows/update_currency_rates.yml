@@ -40,6 +40,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/currency_rates.csv
+          git add currency_rates.csv
           git commit -m "Automatyczna aktualizacja kursów walut NBP $(date +'%Y-%m-%d')" || echo "Brak zmian do zatwierdzenia"
           git push
